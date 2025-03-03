@@ -31,22 +31,29 @@ py gen_params [model_file_name] [constant]
 ```math
 Q_{out} = clmap(round(\dfrac{x_{input}}{scale}+zeropoint),Q_{min},Q_{max})
 ```
+
 一開始在模型中的輸入必須先轉換為int8或者uint8形式，因此以上公式為tensorflow純粹將tensor轉換為quant的方式。
 
 #### Conv quant formula
 ```math
 Q_{conv2D}=clamp(round(\dfrac{S_wS_{input}}{S_{conv2D}}\sum{(Q_{input}-zp_{input})*(Q_w-zp_w)}+zp_{conv2D}),Q_{min},Q_{max})
 ```
+
 模型中conv2D的公式為
+
 ```math
 y_{f} = \sum{x_f}{w_f}+y_{bias}
 ```
+
 而在硬體架構中我們的輸入及權重都是在-128~127 or 0~255當中
 
 因此我們便須將輸入都改成為Quantize的版本
+
 ```math
 S_3(y_q-y_{zp})= \sum{S_1}(x_q-x_{zp})S_2(w_q-w_{zp}) +y_{bias}
 
+```
+```math
 
 y_q-y_{zp} = \dfrac{S_1S_2}{S_3}\sum(x_q-x_{zp})(w_q-w_{zp})+\dfrac{y_{bias}}{S_3}
 ```
@@ -56,8 +63,13 @@ y_q-y_{zp} = \dfrac{S_1S_2}{S_3}\sum(x_q-x_{zp})(w_q-w_{zp})+\dfrac{y_{bias}}{S_
 則：
 ```math
 (y_q-y_{zp})=M\sum{(x_q-x_{zp})(w_q-w_{zp})}+M\dfrac{y_{bias}}{S_1S_2}
+```
+```math
 
 (y_q-y_{zp}) = M\{\sum{(x_q-x_{zp})({w_q-w_{zp})+\dfrac{y_{bias}}{S_1S_2}}}\}
+```
+
+```math
 
 y_q = M\{\sum{(x_q-x_{zp})({w_q-w_{zp})+\dfrac{y_{bias}}{S_1S_2}}}\}+y_{zp}
 ```
@@ -65,9 +77,11 @@ y_q = M\{\sum{(x_q-x_{zp})({w_q-w_{zp})+\dfrac{y_{bias}}{S_1S_2}}}\}+y_{zp}
 而到這邊我們就推導出來正確的公式。
 
 而在Pytorch及Tensorflow當中都必須要四捨五入後做夾擠
+
 ```math
 
-$output = clamp(round(y_q,Q_{min},Q_{max}))$
+output = clamp(round(y_q,Q_{min},Q_{max}))
+```
 
 
 我們可以定義multiplier $M\approx\dfrac{x_{scale}w_{scale}}{scale}$
@@ -79,22 +93,27 @@ n : 為非零整數
 $M_0:$ a fixed-point multiplier
 
 $M :$ floating point 
-```
+
 ref:
 [Quantization and Training of Neural Networks for Efficient
 Integer-Arithmetic-Only Inference
 ](https://arxiv.org/pdf/1712.05877)
 #### Conv forumla in Hardware
 ```math
-$y_q = M\{\sum{(x_q-x_{zp})({w_q-w_{zp})+\dfrac{y_{bias}}{S_1S_2}}}\}+y_{zp}$
-
-$y_f=M(\sum{x_qw_q}-w_{zp}\sum{x_q}-x_{zp}\sum{w_q}+\sum{x_{zp}w_{zp}}+\dfrac{y_{bias}}{S_1S_2})+y_{zp}$
+y_q = M\{\sum{(x_q-x_{zp})({w_q-w_{zp})+\dfrac{y_{bias}}{S_1S_2}}}\}+y_{zp}
+```
+```math
+y_f=M(\sum{x_qw_q}-w_{zp}\sum{x_q}-x_{zp}\sum{w_q}+\sum{x_{zp}w_{zp}}+\dfrac{y_{bias}}{S_1S_2})+y_{zp}
+```
 
 **由於我們在Pytorch中訓練QAT時，在x86的預設下，Weight會是以Symmertic的方式去訓練，因此不存在zero points。公式我們可以直接改寫成**
 
+```math
 
-$a_2 = \sum{w_q}$ 
+a_2 = \sum{w_q}
+```
+```math
 
-$y_f=Z_3+2^{-n}M_0(\sum{x_qw_q}+Z_1a_2+bias)$
+y_f=Z_3+2^{-n}M_0(\sum{x_qw_q}+Z_1a_2+bias)
 
 ```
