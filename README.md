@@ -28,18 +28,19 @@ py gen_params [model_file_name] [constant]
 
 
 ### Quantize formula
-
+```math
 $Q_{out} = clmap(round(\dfrac{x_{input}}{scale}+zeropoint),Q_{min},Q_{max})$
-
+```
 一開始在模型中的輸入必須先轉換為int8或者uint8形式，因此以上公式為tensorflow純粹將tensor轉換為quant的方式。
 
 #### Conv quant formula
+```math
 $Q_{conv2D}=clamp(round(\dfrac{S_wS_{input}}{S_{conv2D}}\sum{(Q_{input}-zp_{input})*(Q_w-zp_w)}+zp_{conv2D}),Q_{min},Q_{max})$
-
+```
 模型中conv2D的公式為
-
+```math
 $y_{f} = \sum{x_f}{w_f}+y_{bias}$
-
+```
 而在硬體架構中我們的輸入及權重都是在-128~127 or 0~255當中
 
 因此我們便須將輸入都改成為Quantize的版本
