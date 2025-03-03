@@ -30,6 +30,7 @@ py gen_params [model_file_name] [constant]
 ### Quantize formula
 
 $Q_{out} = clmap(round(\dfrac{x_{input}}{scale}+zeropoint),Q_{min},Q_{max})$
+
 一開始在模型中的輸入必須先轉換為int8或者uint8形式，因此以上公式為tensorflow純粹將tensor轉換為quant的方式。
 
 #### Conv quant formula
@@ -69,7 +70,9 @@ $output = clamp(round(y_q,Q_{min},Q_{max}))$
 而 $M = 2^{-n}M_0$  
 
 n : 為非零整數
+
 $M_0:$ a fixed-point multiplier
+
 $M :$ floating point 
 
 ref:
