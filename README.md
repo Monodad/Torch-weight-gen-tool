@@ -45,7 +45,7 @@ Q_{conv2D}=clamp(round(\dfrac{S_wS_{input}}{S_{conv2D}}\sum{(Q_{input}-zp_{input
 y_{f} = \sum{x_f}{w_f}+y_{bias}
 ```
 
-而在硬體架構中我們的輸入及權重都是在-128~127 or 0~255當中
+而在硬體架構中我們的輸入及權重都是在 -128 to 127 or 0 to 255 當中
 
 因此我們便須將輸入都改成為Quantize的版本
 
