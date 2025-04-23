@@ -4,177 +4,278 @@ import torch.nn.functional as F
 import sys
 import numpy as np
 import ast
+import os
 from torch.ao.nn.quantized import functional as qF
+import torch.nn as nn
+import timeit
 
 
-sys.path.append('../ML')  # noqa
-from CNN import *  # noqa
-from Quantized import *  # noqa
-from save_to_txt import *  # noqa
-# 读取参数文件的辅助函数
+def save_array_to_txt(array, filename: str):
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    if array is None:
+        print(f"警告: 儲存 {filename} 時遇到空陣列")
+        with open(filename, 'w') as f:
+            array = np.zeros(1)
+            array_str = np.array2string(
+                array,
+                separator=', ',    # 用逗號和空格分隔
+                precision=8,       # 8位小數
+                suppress_small=True,  # 抑制科學記號
+                threshold=np.inf,   # 顯示所有元素
+                max_line_width=np.inf  # 不換行
+            )
+            f.write(array_str)
+            f.close()
+        return
+    if torch.is_tensor(array):
+        if (array.dtype == torch.qint8) or (array.dtype == torch.quint8):
+            # print(array)
+            array = array.int_repr().numpy()
+        else:
+            array = array.detach().cpu().numpy()
+
+        with open(filename, 'w') as f:
+            array_str = np.array2string(
+                array,
+                separator=', ',    # 用逗號和空格分隔
+                precision=20,       # 8位小數
+                suppress_small=True,  # 抑制科學記號
+                threshold=np.inf,   # 顯示所有元素
+                max_line_width=np.inf  # 不換行
+            )
+            f.write(array_str)
+            f.close()
+    else:
+        array = np.array(array)
+        with open(filename, 'w') as f:
+            array_str = np.array2string(
+                array,
+                separator=', ',    # 用逗號和空格分隔
+                precision=20,       # 8位小數
+                suppress_small=True,  # 抑制科學記號
+                threshold=np.inf,   # 顯示所有元素
+                max_line_width=np.inf  # 不換行
+            )
+            f.write(array_str)
+            f.close()
 
 
 def read_txt(file_path):
-    with open("save_activation/layer_weight/" + file_path, "r") as f:
-        content = f.read()
-        data = ast.literal_eval(content)
-        tensor_data = torch.tensor(data, dtype=torch.float32)
-        f.close()
+    tensor_data = torch.load("weight/" + file_path)
+    # with open("weight/" + file_path, "r") as f:
+    #     content = f.read()
+    #     data = ast.literal_eval(content)
+    #     tensor_data = torch.tensor(data, dtype=torch.float32)
+    #     f.close()
     return tensor_data
 
 
-def linearqunat(input, input_scale, input_zp, weight, weight_scale, weight_zp, output_scale, output_zp, bias, za: torch.Tensor) -> torch.Tensor:
-    scale_param = input_scale * weight_scale/output_scale
-    bias_q = bias/(weight_scale*input_scale)
-    shift = 2 ** (-32)
-    m = input_scale * weight_scale/output_scale
-    m_0 = m/shift
-    print(-za + bias_q)
+def mse_loss(data1, data2):
+    squared_diff = (data1 - data2) ** 2
+    return np.mean(squared_diff.numpy())
+
+
+def linearqunat(input, M0: torch.Tensor, weight: torch.Tensor,  za_bias: torch.Tensor, zeropoint: torch.Tensor) -> torch.Tensor:
     mult = torch.matmul(input, weight.t())
-    out = torch.round(shift * m_0 * (mult-za + bias_q)) + output_zp
+    print(mult.shape)
+    print(za_bias.shape)
+    out = torch.round(M0 * (mult+za_bias)) + zeropoint
     return out
 
 
-def Conv2dquant(quant_input: torch.Tensor, input_scale: torch.Tensor, input_zp, weight_scale: torch.Tensor, bias: torch.Tensor, scale: torch.Tensor, zp: torch.Tensor, za: torch.Tensor) -> torch.Tensor:
+def Conv3dquant(input, M0: torch.Tensor,  za_bias: torch.Tensor, zeropoint: torch.Tensor) -> torch.Tensor:
     # input_x_weight = quant_input * weight
-    shift = 2 ** (-32)
-    bias_q = torch.round(bias/(weight_scale
-                               * input_scale))
-    m = input_scale * weight_scale/scale
-    m_0 = m/shift
-
-    output = torch.round(shift*m_0*(quant_input-za + bias_q))+zp
+    # shift = 2 ** (-32)
+    b, c, t, h, w = input.shape
+    output = torch.round(
+        M0 * (input+za_bias.view(c, 1, 1, 1))) + zeropoint
     return output
 
 
 if __name__ == '__main__':
-    with open("save_activation/input.txt", "r") as f:
-        content = f.read()
-        data = ast.literal_eval(content)
-        tensor_data = torch.tensor(data)
-        f.close()
-    input = tensor_data
-    with open("save_activation/conv2_pw.txt", "r") as f:
-        content = f.read()
-        data = ast.literal_eval(content)
-        tensor_data = torch.tensor(data)
-        f.close()
-    model_conv2_pw_out = tensor_data
-    with open("save_activation/dequant.txt", "r") as f:
-        content = f.read()
-        data = ast.literal_eval(content)
-        tensor_data = torch.tensor(data)
-        f.close()
-    dequant = tensor_data
-    # 读取 scale 和 zero_point
-    conv1_dw_scale = read_txt("conv1_dw.scale.txt")
-    conv1_dw_zero_point = read_txt("conv1_dw.zero_point.txt")
-    conv1_dw_weight = read_txt("conv1_dw.weight.txt")
-    conv1_dw_bias = read_txt("conv1_dw.bias.txt")
-    conv1_dw_weight_scale = read_txt("conv1_dw.weight_scale.txt")
-    conv1_dw_weight_zero_point = read_txt("conv1_dw.weight_zero_points.txt")
-    conv1_dw_za = read_txt("conv1_dw.weight_za.txt")
+    # 读取参数D
+    quant_scale = read_txt("quant.scale.pt")
+    quant_zero_point = read_txt("quant.zero_point.pt")
+    conv1_dw_M0 = read_txt("mult/conv1_dw_m0.pt")
+    # conv1_dw_za_bias = read_txt("conv1_dw_za_bias.pt")
+    conv1_dw_weight = read_txt("conv1_dw.weight.pt")
+    conv1_dw_bias = read_txt("bias/conv1_dw_bias.pt")
 
-    conv1_pw_scale = read_txt("conv1_pw.scale.txt")
-    conv1_pw_zero_point = read_txt("conv1_pw.zero_point.txt")
-    conv1_pw_weight = read_txt("conv1_pw.weight.txt")
-    conv1_pw_bias = read_txt("conv1_pw.bias.txt")
-    conv1_pw_weight_scale = read_txt("conv1_pw.weight_scale.txt")
-    conv1_pw_weight_zero_point = read_txt("conv1_pw.weight_zero_points.txt")
-    conv1_pw_za = read_txt("conv1_pw.weight_za.txt")
+    conv1_pw_M0 = read_txt("mult/conv1_pw_m0.pt")
+    # conv1_pw_za_bias = read_txt("conv1_pw_za_bias.pt")
+    conv1_pw_weight = read_txt("conv1_pw.weight.pt")
+    conv1_pw_bias = read_txt("bias/conv1_pw_bias.pt")
 
-    conv2_dw_scale = read_txt("conv2_dw.scale.txt")
-    conv2_dw_zero_point = read_txt("conv2_dw.zero_point.txt")
-    conv2_dw_weight = read_txt("conv2_dw.weight.txt")
-    conv2_dw_bias = read_txt("conv2_dw.bias.txt")
-    conv2_dw_weight_scale = read_txt("conv2_dw.weight_scale.txt")
-    conv2_dw_weight_zero_point = read_txt("conv2_dw.weight_zero_points.txt")
-    conv2_dw_za = read_txt("conv2_dw.weight_za.txt")
+    conv2_dw_M0 = read_txt("mult/conv2_dw_m0.pt")
+    # conv2_dw_za_bias = read_txt("conv2_dw_za_bias.pt")
+    conv2_dw_weight = read_txt("conv2_dw.weight.pt")
+    conv2_dw_bias = read_txt("bias/conv2_dw_bias.pt")
 
-    conv2_pw_scale = read_txt("conv2_pw.scale.txt")
-    conv2_pw_zero_point = read_txt("conv2_pw.zero_point.txt")
-    conv2_pw_weight = read_txt("conv2_pw.weight.txt")
-    conv2_pw_bias = read_txt("conv2_pw.bias.txt")
-    conv2_pw_weight_scale = read_txt("conv2_pw.weight_scale.txt")
-    conv2_pw_weight_zero_point = read_txt("conv2_pw.weight_zero_points.txt")
-    conv2_pw_za = read_txt("conv2_pw.weight_za.txt")
+    conv2_pw_M0 = read_txt("mult/conv2_pw_m0.pt")
+    # conv2_pw_za_bias = read_txt("conv2_pw_za_bias.pt")
+    conv2_pw_weight = read_txt("conv2_pw.weight.pt")
+    conv2_pw_bias = read_txt("bias/conv2_pw_bias.pt")
 
-    fc1_scale = read_txt("fc1.scale.txt")
-    fc1_zero_point = read_txt("fc1.zero_point.txt")
-    fc1_weight = read_txt("fc1._packed_params._packed_params_weight.txt")
-    fc1_bias = read_txt("fc1._packed_params._packed_params_bias.txt")
-    fc1_weight_zp = read_txt(
-        "fc1._packed_params._packed_params_zero_points.txt")
-    fc1_weights_scale = read_txt(
-        "fc1._packed_params._packed_params_scale.txt")
-    fc1_za = read_txt("fc1._packed_params._packed_params_za.txt")
+    conv3a_dw_M0 = read_txt("mult/conv3a_dw_m0.pt")
+    # conv3a_dw_za_bias = read_txt("conv3a_dw_za_bias.pt")
+    conv3a_dw_weight = read_txt("conv3a_dw.weight.pt")
+    conv3a_dw_bias = read_txt("bias/conv3a_dw_bias.pt")
 
-    fc2_scale = read_txt("fc2.scale.txt")
-    fc2_zero_point = read_txt("fc2.zero_point.txt")
-    fc2_weight = read_txt("fc2._packed_params._packed_params_weight.txt")
-    fc2_bias = read_txt("fc2._packed_params._packed_params_bias.txt")
-    fc2_weight_zp = read_txt(
-        "fc2._packed_params._packed_params_zero_points.txt")
-    fc2_weights_scale = read_txt("fc2._packed_params._packed_params_scale.txt")
-    fc2_za = read_txt("fc2._packed_params._packed_params_za.txt")
+    conv3a_pw_M0 = read_txt("mult/conv3a_pw_m0.pt")
+    # conv3a_pw_za_bias = read_txt("conv3a_pw_za_bias.pt")
+    conv3a_pw_weight = read_txt("conv3a_pw.weight.pt")
+    conv3a_pw_bias = read_txt("bias/conv3a_pw_bias.pt")
 
-    quant_scale = read_txt("quant.scale.txt")
-    quant_zero_point = read_txt("quant.zero_point.txt")
+    conv4a_dw_M0 = read_txt("mult/conv4a_dw_m0.pt")
+    # conv4a_dw_za_bias = read_txt("conv4a_dw_za_bias.pt")
+    conv4a_dw_weight = read_txt("conv4a_dw.weight.pt")
+    conv4a_dw_bias = read_txt("bias/conv4a_dw_bias.pt")
+
+    conv4a_pw_M0 = read_txt("mult/conv4a_pw_m0.pt")
+    # conv4a_pw_za_bias = read_txt("conv4a_pw_za_bias.pt")
+    conv4a_pw_weight = read_txt("conv4a_pw.weight.pt")
+    conv4a_pw_bias = read_txt("bias/conv4a_pw_bias.pt")
+
+    conv5a_dw_M0 = read_txt("mult/conv5a_dw_m0.pt")
+    # conv5a_dw_za_bias = read_txt("conv5a_dw_za_bias.pt")
+    conv5a_dw_weight = read_txt("conv5a_dw.weight.pt")
+    conv5a_dw_bias = read_txt("bias/conv5a_dw_bias.pt")
+
+    conv5a_pw_M0 = read_txt("mult/conv5a_pw_m0.pt")
+    # conv5a_pw_za_bias = read_txt("conv5a_pw_za_bias.pt")
+    conv5a_pw_weight = read_txt("conv5a_pw.weight.pt")
+    conv5a_pw_bias = read_txt("bias/conv5a_pw_bias.pt")
+
+    fc6_M0 = read_txt("mult/fc6_m0.pt")
+    # fc6_za_bias = read_txt("fc6_za_bias.pt")
+    fc6_weight = read_txt("fc6._packed_params._packed_params_weight.pt")
+    fc6_bias = read_txt("bias/fc6_bias.pt")
+    fc7_M0 = read_txt("mult/fc7_m0.pt")
+    # fc7_za_bias = read_txt("fc7_za_bias.pt")
+    fc7_weight = read_txt("fc7._packed_params._packed_params_weight.pt")
+    fc7_bias = read_txt("bias/fc7_bias.pt")
+
+    input = torch.load("./input/input.pt")
+
+    bais = torch.Tensor([0.04970953, -0.100181185, -0.05816611])
+
+    start_time = timeit.default_timer()
     next = torch.clamp(
-        torch.round(input/quant_scale + quant_zero_point), min=0, max=255)
-    save_array_to_txt(next, "save_activation_out/quant_output.txt")
-
-    next = F.conv2d(next, conv1_dw_weight,
-                    bias=None, stride=1)
-
-    next = Conv2dquant(next, input_scale=quant_scale, input_zp=quant_zero_point,
-                       weight_scale=conv1_dw_weight_scale, bias=conv1_dw_bias, scale=conv1_dw_scale, zp=conv1_dw_zero_point, za=conv1_dw_za)
-    next = F.relu(next)
-    save_array_to_txt(next, "save_activation_out/conv1_dw_output.txt")
-    next = F.max_pool2d(next, kernel_size=(2, 2), stride=(2, 2))
-    save_array_to_txt(next, "save_activation_out/Max_pool2d.txt")
-    next = F.conv2d(next, conv1_pw_weight,
-                    bias=None, stride=1, padding=0)
-    next = Conv2dquant(next, input_scale=conv1_dw_scale, input_zp=conv1_dw_zero_point, weight_scale=conv1_pw_weight_scale,
-                       bias=conv1_pw_bias, scale=conv1_pw_scale, zp=conv1_pw_zero_point, za=conv1_pw_za)
-    next = F.relu(next)
-    save_array_to_txt(next, "save_activation_out/conv1_pw_output.txt")
-    next = F.conv2d(next, conv2_dw_weight, groups=10,
-                    bias=None, stride=1, padding=0)
-    next = Conv2dquant(next, input_scale=conv1_pw_scale, input_zp=conv1_pw_zero_point, weight_scale=conv2_dw_weight_scale,
-                       bias=conv2_dw_bias, scale=conv2_dw_scale, zp=conv2_dw_zero_point, za=conv2_dw_za)
-    next = F.relu(next)
-    save_array_to_txt(next, "save_activation_out/conv2_dw_output.txt")
-    next = F.max_pool2d(next, kernel_size=(2, 2), stride=(2, 2))
-    next = F.conv2d(next, conv2_pw_weight,
-                    bias=None, stride=1, padding=0)
-    next = Conv2dquant(next, input_scale=conv2_dw_scale, input_zp=conv2_dw_zero_point, weight_scale=conv2_pw_weight_scale,
-                       bias=conv2_pw_bias, scale=conv2_pw_scale, zp=conv2_pw_zero_point, za=conv2_pw_za)
-    next = F.relu(next)
-    save_array_to_txt(next, "save_activation_out/conv2_pw_output.txt")
-    next = next.contiguous().view(-1, 320)
-    next = linearqunat(next, input_scale=conv2_pw_scale, input_zp=conv2_pw_zero_point, weight=fc1_weight, weight_scale=fc1_weights_scale,
-                       weight_zp=fc1_weight_zp, output_scale=fc1_scale, output_zp=fc1_zero_point, bias=fc1_bias, za=fc1_za)
-    next = F.relu(next)
-    save_array_to_txt(next, "save_activation_out/FC1.txt")
-    next = linearqunat(next, input_scale=fc1_scale, input_zp=fc1_zero_point, weight=fc2_weight, weight_scale=fc2_weights_scale,
-                       weight_zp=fc2_weight_zp, output_scale=fc2_scale, za=fc2_za, output_zp=fc2_zero_point, bias=fc2_bias)
-    # dequant fc2 output
-    next = (next - fc2_zero_point) * fc2_scale
-    output = F.log_softmax(next, dim=1)
-    with open("save_activation_out/model_int8_output.txt", "r") as f:
-        content = f.read()
-        data = ast.literal_eval(content)
-        tensor_data = torch.tensor(data)
-        f.close()
-    model_int8_output = tensor_data
-    with open("save_activation_out/model_output.txt", "r") as f:
-        content = f.read()
-        data = ast.literal_eval(content)
-        tensor_data = torch.tensor(data)
-        f.close()
-    model_output = tensor_data
+        torch.round(input/quant_scale+quant_zero_point), min=0, max=255)
+    next = next.to(torch.int8)
+    model_output = torch.load("./output/quant.pt")
     print(
-        f"The final error of cal is {F.mse_loss(output, model_output)} (vs. Float32 model )")
+        f"The final error of cal is {mse_loss(next, model_output.int_repr())}")
+    x = next
+    next = (next - quant_zero_point)
+    print(next.to(torch.float))
+    conv1_dw_weight = conv1_dw_weight.to(torch.float)
+    print(conv1_dw_weight)
+    # Conv1_dw
+    next = F.conv3d(next.to(torch.float), conv1_dw_weight,
+                    bias=conv1_dw_bias.to(torch.float), padding=(1, 1, 1), stride=(1, 1, 1), groups=3)
+
+    next = torch.round(
+        next * (conv1_dw_M0).view(3, 1, 1, 1))
+
+    next = F.relu(next)
+    model_output = torch.load("./output/conv1_dw.pt")
+    print(mse_loss(next, model_output.int_repr()))
+    next = F.max_pool3d(next, kernel_size=(1, 2, 2), stride=(1, 2, 2))
+
+    # Conv1_pw
+    next = F.conv3d(next.to(torch.float), conv1_pw_weight.to(torch.float),
+                    bias=None)
+
+    next = torch.round(
+        (next) * (conv1_pw_M0).view(64, 1, 1, 1))
+
+    next = F.relu(next)
+    model_output = torch.load("./output/conv1_pw.pt")
+    print(mse_loss(next, model_output.int_repr()))
+    next = F.conv3d(next.to(torch.float), conv2_dw_weight.to(torch.float),
+                    bias=None, padding=(1, 1, 1), stride=1, groups=64)
+    next = Conv3dquant(next, M0=conv2_dw_M0.view(64, 1, 1, 1),
+                       za_bias=conv2_dw_bias, zeropoint=0)
+    next = F.relu(next)
+    # Max_pool2d
+    next = F.max_pool3d(next, kernel_size=(2, 2, 2), stride=(2, 2, 2))
+
+    # Conv2_pw
+    next = F.conv3d(next.to(torch.float),
+                    conv2_pw_weight.to(torch.float), bias=None)
+    next = Conv3dquant(next, M0=conv2_pw_M0.view(128, 1, 1, 1),
+                       za_bias=conv2_pw_bias, zeropoint=0)
+    next = F.relu(next)
+    # Conv3a_dw
+    next = F.conv3d(next.to(torch.float), conv3a_dw_weight.to(torch.float),
+                    bias=None, padding=(1, 1, 1), stride=1, groups=128)
+    next = Conv3dquant(next, M0=conv3a_dw_M0.view(128, 1, 1, 1),
+                       za_bias=conv3a_dw_bias, zeropoint=0)
+    next = F.relu(next)
+    # Max_pool2d
+    next = F.max_pool3d(next, kernel_size=(2, 2, 2), stride=(2, 2, 2))
+    # Conv3a_pw
+    next = F.conv3d(next.to(torch.float),
+                    conv3a_pw_weight.to(torch.float), bias=None)
+    next = Conv3dquant(next, M0=conv3a_pw_M0.view(256, 1, 1, 1),
+                       za_bias=conv3a_pw_bias, zeropoint=0)
+    next = F.relu(next)
+    # Conv4a_dw
+    next = F.conv3d(next.to(torch.float), conv4a_dw_weight.to(torch.float),
+                    bias=None, padding=(1, 1, 1), stride=1, groups=256)
+    next = Conv3dquant(next, M0=conv4a_dw_M0.view(256, 1, 1, 1),
+                       za_bias=conv4a_dw_bias, zeropoint=0)
+    next = F.relu(next)
+    # Max_pool2d
+    next = F.max_pool3d(next, kernel_size=(2, 2, 2),
+                        stride=(2, 2, 2), padding=(0, 1, 1))
+    # Conv4a_pw
+    next = F.conv3d(next.to(torch.float),
+                    conv4a_pw_weight.to(torch.float), bias=None)
+    next = Conv3dquant(next, M0=conv4a_pw_M0.view(512, 1, 1, 1),
+                       za_bias=conv4a_pw_bias, zeropoint=0)
+    next = F.relu(next)
+    # Conv5a_dw
+    next = F.conv3d(next.to(torch.float), conv5a_dw_weight.to(torch.float),
+                    bias=conv5a_dw_bias.to(torch.float), padding=(1, 1, 1), stride=1, groups=512)
+    next = Conv3dquant(next, M0=conv5a_dw_M0.view(512, 1, 1, 1),
+                       za_bias=conv5a_dw_bias, zeropoint=0)
+    next = F.relu(next)
+    # Max_pool2d
+    next = F.max_pool3d(next, kernel_size=(2, 2, 2), stride=(2, 2, 2))
+    # Conv5a_pw
+    next = F.conv3d(next.to(torch.float),
+                    conv5a_pw_weight.to(torch.float), bias=None)
+    next = Conv3dquant(next, M0=conv5a_pw_M0.view(512, 1, 1, 1),
+                       za_bias=conv5a_pw_bias, zeropoint=0)
+    next = F.relu(next)
+    # print(next)
+    model_output = torch.load("./output/conv5a_pw.pt")
+    print(mse_loss(next, model_output.int_repr()))
+    # fc6
+
+    next = next.view(-1, 2048)
+    next = linearqunat(next, M0=fc6_M0, weight=fc6_weight.to(torch.double),
+                       za_bias=fc6_bias, zeropoint=0)
+    next = F.relu(next)
+    model_output = torch.load("./output/fc6.pt")
+    print(mse_loss(next, model_output.int_repr()))
+    # fc7
+    fc7_scale = torch.load("weight/fc7.scale.pt")
+    fc7_zero_point = torch.load("weight/fc7.zero_point.pt")
+    next = linearqunat(next, M0=fc7_M0, weight=fc7_weight.to(torch.double),
+                       za_bias=fc7_bias, zeropoint=fc7_zero_point)
+    model_output = torch.load("./output/fc7.pt")
+    print(mse_loss(next, model_output.int_repr()))
+    stop_time = timeit.default_timer()
+    print("Execution time: " + str(stop_time - start_time) + "\n")
+    out = (next-fc7_zero_point)*fc7_scale
+    stop_time = timeit.default_timer()
+    model_output = torch.load("output/dequant.pt")
+    print(mse_loss(out, model_output))
+    print(nn.Softmax(dim=1)(out))
+    print(repr(nn.Softmax(dim=1)(model_output)))
+    print(torch.allclose(out, model_output.to(torch.double)))
     print(
-        f"The final error of cal is {F.mse_loss(output, model_int8_output)} (vs. int8 model)")
+        f"The final error of cal is {mse_loss(nn.Softmax(dim=1)(out), nn.Softmax(dim=1)(model_output))}")
