@@ -76,7 +76,7 @@ class qunat_model_tool():
             if not layer:
                 pass
             else:
-                save_array_to_txt(activation, out_path + layer + ".txt")
+                torch.save(activation, out_path + layer + ".pt")
 
         print("Done!")
 
@@ -100,34 +100,34 @@ class qunat_model_tool():
                 pass
             elif "_packed_params._packed_params" in name:
                 weight, bias = self.model_int.state_dict()[name]
-                save_array_to_txt(
-                    weight.int_repr(), f"params/{name}_weight.txt")
-                save_array_to_txt(
-                    weight.int_repr(), f"weight/{name}_weight.txt")
+                torch.save(
+                    weight.int_repr(), f"params/{name}_weight.pt")
+                torch.save(
+                    weight.int_repr(), f"weight/{name}_weight.pt")
 
-                save_array_to_txt(weight.q_scale(),
-                                  f"weight/{name}_scale.txt")
-                save_array_to_txt(weight.q_zero_point(),
-                                  f"weight/{name}_zero_points.txt")
-                save_array_to_txt(
-                    bias, f"weight/{name}_bias.txt")
-                save_array_to_txt(bias, f"weight/{name}_bias.txt")
+                torch.save(weight.q_scale(),
+                           f"weight/{name}_scale.pt")
+                torch.save(weight.q_zero_point(),
+                           f"weight/{name}_zero_points.pt")
+                torch.save(
+                    bias, f"weight/{name}_bias.pt")
+                torch.save(bias, f"weight/{name}_bias.pt")
             elif self.model_int.state_dict()[name].is_quantized:
-                save_array_to_txt(self.model_int.state_dict()[
-                    name].q_scale(), f"weight/{name}_scale.txt")
-                save_array_to_txt(self.model_int.state_dict()[
-                    name].q_zero_point(), f"weight/{name}_zero_points.txt")
-                save_array_to_txt(self.model_int.state_dict()[
-                    name].int_repr(), f"weight/{name}.txt")
-                save_array_to_txt(self.model_int.state_dict()[
-                    name].int_repr(), f"params/{name}.txt")
+                torch.save(self.model_int.state_dict()[
+                    name].q_scale(), f"weight/{name}_scale.pt")
+                torch.save(self.model_int.state_dict()[
+                    name].q_zero_point(), f"weight/{name}_zero_points.pt")
+                torch.save(self.model_int.state_dict()[
+                    name].int_repr(), f"weight/{name}.pt")
+                torch.save(self.model_int.state_dict()[
+                    name].int_repr(), f"params/{name}.pt")
                 weight = self.model_int.state_dict(
                 )[name].int_repr()
-                save_array_to_txt(
-                    weight, f"weight/{name}_a.txt")
+                torch.save(
+                    weight, f"weight/{name}_a.pt")
             else:
-                save_array_to_txt(self.model_int.state_dict()[
-                    name], f"weight/{name}.txt")
+                torch.save(self.model_int.state_dict()[
+                    name], f"weight/{name}.pt")
         params_process()
         if keep_weight:
             pass

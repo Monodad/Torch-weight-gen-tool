@@ -61,7 +61,7 @@ def save_array_to_txt(array, filename: str):
 
 
 def read_txt(file_path):
-    tensor_data = torch.load("weight/" + file_path)
+    tensor_data = torch.load("params/" + file_path)
     # with open("weight/" + file_path, "r") as f:
     #     content = f.read()
     #     data = ast.literal_eval(content)
@@ -80,6 +80,7 @@ def linearqunat(input, M0: torch.Tensor, weight: torch.Tensor,  za_bias: torch.T
     print(mult.shape)
     print(za_bias.shape)
     out = torch.round(M0 * (mult+za_bias)) + zeropoint
+    out = torch.clamp(out, min=0, max=127)
     return out
 
 
@@ -89,6 +90,7 @@ def Conv3dquant(input, M0: torch.Tensor,  za_bias: torch.Tensor, zeropoint: torc
     b, c, t, h, w = input.shape
     output = torch.round(
         M0 * (input+za_bias.view(c, 1, 1, 1))) + zeropoint
+    output = torch.clamp(output, min=0, max=127)
     return output
 
 
@@ -157,11 +159,9 @@ if __name__ == '__main__':
 
     input = torch.load("./input/input.pt")
 
-    bais = torch.Tensor([0.04970953, -0.100181185, -0.05816611])
-
     start_time = timeit.default_timer()
     next = torch.clamp(
-        torch.round(input/quant_scale+quant_zero_point), min=0, max=255)
+        torch.round(input/quant_scale+quant_zero_point), min=0, max=127)
     next = next.to(torch.int8)
     model_output = torch.load("./output/quant.pt")
     print(
@@ -176,7 +176,7 @@ if __name__ == '__main__':
                     bias=conv1_dw_bias.to(torch.float), padding=(1, 1, 1), stride=(1, 1, 1), groups=3)
 
     next = torch.round(
-        next * (conv1_dw_M0).view(3, 1, 1, 1))
+        next * (conv1_dw_M0))
 
     next = F.relu(next)
     model_output = torch.load("./output/conv1_dw.pt")
@@ -185,47 +185,59 @@ if __name__ == '__main__':
 
     # Conv1_pw
     next = F.conv3d(next.to(torch.float), conv1_pw_weight.to(torch.float),
-                    bias=None)
+                    bias=conv1_pw_bias.to(torch.float))
 
     next = torch.round(
-        (next) * (conv1_pw_M0).view(64, 1, 1, 1))
+        (next) * (conv1_pw_M0))
 
     next = F.relu(next)
     model_output = torch.load("./output/conv1_pw.pt")
     print(mse_loss(next, model_output.int_repr()))
+
     next = F.conv3d(next.to(torch.float), conv2_dw_weight.to(torch.float),
-                    bias=None, padding=(1, 1, 1), stride=1, groups=64)
-    next = Conv3dquant(next, M0=conv2_dw_M0.view(64, 1, 1, 1),
-                       za_bias=conv2_dw_bias, zeropoint=0)
+                    bias=conv2_dw_bias.to(torch.float), padding=(1, 1, 1), stride=1, groups=64)
+    next = (next*conv2_dw_M0).round()
     next = F.relu(next)
+    model_output = torch.load("./output/conv2_dw.pt")
+    print(mse_loss(next, model_output.int_repr()))
+
     # Max_pool2d
     next = F.max_pool3d(next, kernel_size=(2, 2, 2), stride=(2, 2, 2))
 
     # Conv2_pw
-    next = F.conv3d(next.to(torch.float),
-                    conv2_pw_weight.to(torch.float), bias=None)
-    next = Conv3dquant(next, M0=conv2_pw_M0.view(128, 1, 1, 1),
-                       za_bias=conv2_pw_bias, zeropoint=0)
+    next = F.conv3d(next.to(torch.double),
+                    conv2_pw_weight.to(torch.double), bias=conv2_pw_bias.to(torch.double))
+    next = (next*conv2_pw_M0).round()
+    next = torch.clamp(next, min=0, max=127)
+    model_output = torch.load("./output/conv2_pw.pt")
+    print(mse_loss(next, model_output.int_repr()))
     next = F.relu(next)
     # Conv3a_dw
     next = F.conv3d(next.to(torch.float), conv3a_dw_weight.to(torch.float),
-                    bias=None, padding=(1, 1, 1), stride=1, groups=128)
-    next = Conv3dquant(next, M0=conv3a_dw_M0.view(128, 1, 1, 1),
-                       za_bias=conv3a_dw_bias, zeropoint=0)
+                    bias=conv3a_dw_bias.to(torch.float), padding=(1, 1, 1), stride=1, groups=128)
+    next = (next*conv3a_dw_M0).round()
+    next = torch.clamp(next, min=0, max=127)
+
+    model_output = torch.load("./output/conv3a_dw.pt")
+    print(mse_loss(next, model_output.int_repr()))
     next = F.relu(next)
     # Max_pool2d
     next = F.max_pool3d(next, kernel_size=(2, 2, 2), stride=(2, 2, 2))
     # Conv3a_pw
     next = F.conv3d(next.to(torch.float),
                     conv3a_pw_weight.to(torch.float), bias=None)
-    next = Conv3dquant(next, M0=conv3a_pw_M0.view(256, 1, 1, 1),
+    next = Conv3dquant(next, M0=conv3a_pw_M0,
                        za_bias=conv3a_pw_bias, zeropoint=0)
+    model_output = torch.load("./output/conv3a_pw.pt")
+    print(mse_loss(next, model_output.int_repr()))
     next = F.relu(next)
     # Conv4a_dw
     next = F.conv3d(next.to(torch.float), conv4a_dw_weight.to(torch.float),
                     bias=None, padding=(1, 1, 1), stride=1, groups=256)
-    next = Conv3dquant(next, M0=conv4a_dw_M0.view(256, 1, 1, 1),
+    next = Conv3dquant(next, M0=conv4a_dw_M0,
                        za_bias=conv4a_dw_bias, zeropoint=0)
+    model_output = torch.load("./output/conv4a_dw.pt")
+    print(mse_loss(next, model_output.int_repr()))
     next = F.relu(next)
     # Max_pool2d
     next = F.max_pool3d(next, kernel_size=(2, 2, 2),
@@ -233,21 +245,25 @@ if __name__ == '__main__':
     # Conv4a_pw
     next = F.conv3d(next.to(torch.float),
                     conv4a_pw_weight.to(torch.float), bias=None)
-    next = Conv3dquant(next, M0=conv4a_pw_M0.view(512, 1, 1, 1),
+    next = Conv3dquant(next, M0=conv4a_pw_M0,
                        za_bias=conv4a_pw_bias, zeropoint=0)
+    model_output = torch.load("./output/conv4a_pw.pt")
+    print(mse_loss(next, model_output.int_repr()))
     next = F.relu(next)
     # Conv5a_dw
     next = F.conv3d(next.to(torch.float), conv5a_dw_weight.to(torch.float),
                     bias=conv5a_dw_bias.to(torch.float), padding=(1, 1, 1), stride=1, groups=512)
-    next = Conv3dquant(next, M0=conv5a_dw_M0.view(512, 1, 1, 1),
+    next = Conv3dquant(next, M0=conv5a_dw_M0,
                        za_bias=conv5a_dw_bias, zeropoint=0)
+    model_output = torch.load("./output/conv5a_dw.pt")
+    print(mse_loss(next, model_output.int_repr()))
     next = F.relu(next)
     # Max_pool2d
     next = F.max_pool3d(next, kernel_size=(2, 2, 2), stride=(2, 2, 2))
     # Conv5a_pw
     next = F.conv3d(next.to(torch.float),
                     conv5a_pw_weight.to(torch.float), bias=None)
-    next = Conv3dquant(next, M0=conv5a_pw_M0.view(512, 1, 1, 1),
+    next = Conv3dquant(next, M0=conv5a_pw_M0,
                        za_bias=conv5a_pw_bias, zeropoint=0)
     next = F.relu(next)
     # print(next)
@@ -256,7 +272,7 @@ if __name__ == '__main__':
     # fc6
 
     next = next.view(-1, 2048)
-    next = linearqunat(next, M0=fc6_M0, weight=fc6_weight.to(torch.double),
+    next = linearqunat(next, M0=fc6_M0, weight=fc6_weight.to(torch.float),
                        za_bias=fc6_bias, zeropoint=0)
     next = F.relu(next)
     model_output = torch.load("./output/fc6.pt")
@@ -264,7 +280,7 @@ if __name__ == '__main__':
     # fc7
     fc7_scale = torch.load("weight/fc7.scale.pt")
     fc7_zero_point = torch.load("weight/fc7.zero_point.pt")
-    next = linearqunat(next, M0=fc7_M0, weight=fc7_weight.to(torch.double),
+    next = linearqunat(next, M0=fc7_M0, weight=fc7_weight.to(torch.float),
                        za_bias=fc7_bias, zeropoint=fc7_zero_point)
     model_output = torch.load("./output/fc7.pt")
     print(mse_loss(next, model_output.int_repr()))
@@ -276,6 +292,6 @@ if __name__ == '__main__':
     print(mse_loss(out, model_output))
     print(nn.Softmax(dim=1)(out))
     print(repr(nn.Softmax(dim=1)(model_output)))
-    print(torch.allclose(out, model_output.to(torch.double)))
+    print(torch.allclose(out, model_output.to(torch.float)))
     print(
         f"The final error of cal is {mse_loss(nn.Softmax(dim=1)(out), nn.Softmax(dim=1)(model_output))}")

@@ -97,23 +97,23 @@ def params_process(folder_path="./params/", weight_path="./weight/"):
         matched_files = []
         for filename in file:
             # 檢查是否有名稱是 filename 的開頭
-            if filename.startswith(name) and filename.endswith(".txt"):
+            if filename.startswith(name) and filename.endswith(".pt"):
                 matched_files.append(filename)
         for activate in matched_files:
-            value = read_txt(activate)
-            if (activate.endswith("weight_bias.txt") or activate.endswith("_packed_params_bias.txt")):
+            value = torch.load(weight_path+activate)
+            if (activate.endswith("weight_bias.pt") or activate.endswith("_packed_params_bias.pt")):
                 weight_bias = value
-            elif (activate.endswith("bias.txt")):
+            elif (activate.endswith("bias.pt")):
                 bias = value
-            if (activate.endswith("_packed_params_scale.txt")):
+            if (activate.endswith("_packed_params_scale.pt")):
                 weight_scale = value
-            elif (activate.endswith("weight_scale.txt")):
+            elif (activate.endswith("weight_scale.pt")):
                 weight_scale = value
-            elif (activate.endswith("scale.txt")):
+            elif (activate.endswith("scale.pt")):
                 scale = value
-            if (activate.endswith("weight_zero_points.txt")):
+            if (activate.endswith("weight_zero_points.pt")):
                 weight_zero_point = value
-            elif (activate.endswith("zero_point.txt")):
+            elif (activate.endswith("zero_point.pt")):
                 zero_point = value
 
         if name == 'quant':
@@ -122,24 +122,24 @@ def params_process(folder_path="./params/", weight_path="./weight/"):
             pass
         elif 'fc' in name:
 
-            save_array_to_txt((pre_scale*weight_scale)/scale,
-                              folder_path + f"mult/{name}_m0.txt")
+            torch.save((pre_scale*weight_scale)/scale,
+                       folder_path + f"mult/{name}_m0.pt")
             bias_scale = pre_scale*weight_scale
             bias_fp32 = weight_bias
             bias_i32 = out_dtype(torch.ops.aten.div.Tensor,
                                  torch.int32, bias_fp32, bias_scale)
 
-            save_array_to_txt(bias_i32,
-                              folder_path + f"bias/{name}_bias.txt")
+            torch.save(bias_i32,
+                       folder_path + f"bias/{name}_bias.pt")
             pre_scale = scale
         else:
-            save_array_to_txt((pre_scale*weight_scale)/scale,
-                              folder_path + f"mult/{name}_m0.txt")
+            torch.save((pre_scale*weight_scale)/scale,
+                       folder_path + f"mult/{name}_m0.pt")
             bias_scale = pre_scale*weight_scale
             bias_fp32 = bias
             bias_i32 = out_dtype(torch.ops.aten.div.Tensor,
                                  torch.int32, bias_fp32, bias_scale)
-            save_array_to_txt(bias_i32,
-                              folder_path + f"bias/{name}_bias.txt")
+            torch.save(bias_i32,
+                       folder_path + f"bias/{name}_bias.pt")
 
             pre_scale = scale
