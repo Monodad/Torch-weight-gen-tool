@@ -66,4 +66,4 @@ if __name__ == '__main__':
         model_fp32, QAT_float32_path, qconfig=qat_config, fuse=fuse, input_tensor=test_input)
     model_tool.show()
     model_tool.save_layer_output()
-    model_tool.save_params()
+    model_tool.save_params(keep_weight=True)
